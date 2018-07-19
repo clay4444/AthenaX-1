@@ -1,0 +1,14 @@
+athenax.master.uri: http://localhost:8083
+catalog.impl: com.mydashboard.athena.catalog.impl.MydashboardAthenaCatalogProvider
+clusters:
+  CID-fea171a1-1d8c-4b9b-8a55-6de9ea1fdf3f:
+    yarn.site.location: file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo/yarn-site.xml
+    athenax.home.dir: file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo
+    flink.uber.jar.location: file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo/original-FlinkJob-0.1-SNAPSHOT.jar
+    localize.resources:
+      - file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo/log4j.properties
+    additional.jars:
+      - file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo/connectors.jar
+      - file:///C:/Pearson_Workspace/AthenaX/RnD-git-repo/foo.jar
+extras:
+  jobstore.leveldb.file: ./db
