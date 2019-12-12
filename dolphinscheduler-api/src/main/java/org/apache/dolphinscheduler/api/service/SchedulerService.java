@@ -467,6 +467,7 @@ public class SchedulerService extends BaseService {
         return result;
     }
 
+    //为某一个项目添加一个调度规则
     public void setSchedule(int projectId, int scheduleId) throws RuntimeException{
         logger.info("set schedule, project id: {}, scheduleId: {}", projectId, scheduleId);
 
@@ -480,8 +481,8 @@ public class SchedulerService extends BaseService {
         Date startDate = schedule.getStartTime();
         Date endDate = schedule.getEndTime();
 
-        String jobName = QuartzExecutors.buildJobName(scheduleId);
-        String jobGroupName = QuartzExecutors.buildJobGroupName(projectId);
+        String jobName = QuartzExecutors.buildJobName(scheduleId);  //job_${schedulerID}
+        String jobGroupName = QuartzExecutors.buildJobGroupName(projectId);  //jobgroup_${projectId}
 
         Map<String, Object> dataMap = QuartzExecutors.buildDataMap(projectId, scheduleId, schedule);
 

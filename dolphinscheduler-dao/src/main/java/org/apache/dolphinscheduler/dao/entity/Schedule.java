@@ -31,7 +31,7 @@ import java.util.Date;
 /**
  * schedule
  * 和之前的一样，每次触发，产生一次调度， 不对
- * 它代表的是 一个流程实例，按照何种方式进行调度，所以每个流程实例，对应一个scheduler，每次scheduler触发的时候，产生一个流程实例
+ * 它代表的是 一个流程定义，按照何种方式进行调度，所以每个流程定义，对应一个scheduler，每次scheduler触发的时候，产生一个流程实例
  */
 @Data
 @TableName("t_ds_schedules")

@@ -24,12 +24,13 @@ import java.util.List;
 
 /**
  * definition json data structure
+ * processDefinitionJson json 数据对应的 Class类
  */
 public class ProcessData {
   /**
    * task list
    */
-  private List<TaskNode> tasks;
+  private List<TaskNode> tasks;  //所有的Task
 
   /**
    * global parameters

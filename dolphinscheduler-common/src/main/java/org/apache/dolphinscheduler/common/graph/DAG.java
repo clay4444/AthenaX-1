@@ -26,9 +26,9 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * analysis of DAG
- * Node: node
- * NodeInfo：node description information
- * EdgeInfo: edge description information
+ * Node: node                                    String             任务名
+ * NodeInfo：node description information        TaskNode           任务
+ * EdgeInfo: edge description information        TaskNodeRelation   任务依赖关系
  */
 public class DAG<Node, NodeInfo, EdgeInfo> {
 
@@ -54,15 +54,15 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   public DAG() {
-    nodesMap = new HashMap<>();
-    edgesMap = new HashMap<>();
-    reverseEdgesMap = new HashMap<>();
+    nodesMap = new HashMap<>();  //<节点名(任务名)，具体节点(具体任务)>
+    edgesMap = new HashMap<>();  //< 原节点,< 目标节点,具体的边 > >
+    reverseEdgesMap = new HashMap<>();  // < 目标节点,< 原节点,具体的边 > >
   }
 
 
   /**
+   * 添加节点信息
    * add node information
-   *
    * @param node          node
    * @param nodeInfo      node information
    */
@@ -79,6 +79,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 添加边
    * add edge
    * @param fromNode node of origin
    * @param toNode   node of destination
@@ -102,8 +103,8 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 添加边，真正执行的
    * add edge
-   *
    * @param fromNode        node of origin
    * @param toNode          node of destination
    * @param edge            edge description
@@ -116,7 +117,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
     try{
 
       // Whether an edge can be successfully added(fromNode -> toNode)
-      if (!isLegalAddEdge(fromNode, toNode, createNode)) {
+      if (!isLegalAddEdge(fromNode, toNode, createNode)) { //校验是否有环，是从目标节点一直往后找，看是否能找到原节点
         logger.error("serious error: add edge({} -> {}) is invalid, cause cycle！", fromNode, toNode);
         return false;
       }
@@ -124,8 +125,8 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
       addNodeIfAbsent(fromNode, null);
       addNodeIfAbsent(toNode, null);
 
-      addEdge(fromNode, toNode, edge, edgesMap);
-      addEdge(toNode, fromNode, edge, reverseEdgesMap);
+      addEdge(fromNode, toNode, edge, edgesMap);  //往 edgesMap(正向) 中添加；
+      addEdge(toNode, fromNode, edge, reverseEdgesMap); //往 reverseEdgesMap(反向) 中添加；
 
       return true;
     }finally {
@@ -228,8 +229,8 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 返回dag中的起始节点；
    * get the start node of DAG
-   *
    * @return the start node of DAG
    */
   public Collection<Node> getBeginNode() {
@@ -280,8 +281,8 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 找某个节点的全部后续节点，按图一直往后找吗，所有？ 错，只往后找了一层；
    * Get all subsequent nodes of the node
-   *
    * @param node node id to be calculated
    * @return all subsequent nodes of the node
    */
@@ -289,7 +290,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
     lock.readLock().lock();
 
     try{
-      return getNeighborNodes(node, edgesMap);
+      return getNeighborNodes(node, edgesMap); //往后找一层
     }finally {
       lock.readLock().unlock();
     }
@@ -364,7 +365,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
-   * add edge
+   * add edge   往  reverseEdgesMap  /  edgeMap 中添加；
    *
    * @param fromNode node of origin
    * @param toNode   node of destination
@@ -379,44 +380,46 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 校验新加的边是否会导致环，
+   * 实现的思路就是：是从目标节点一直往后找，看是否能找到原节点
+   *
    * Whether an edge can be successfully added(fromNode -> toNode)
    * need to determine whether the DAG has cycle
-   *
    * @param fromNode     node of origin
    * @param toNode       node of destination
    * @param createNode whether to create a node
    * @return true if added
    */
   private boolean isLegalAddEdge(Node fromNode, Node toNode, boolean createNode) {
-      if (fromNode.equals(toNode)) {
+      if (fromNode.equals(toNode)) { //开始节点和结束节点不能一样
           logger.error("edge fromNode({}) can't equals toNode({})", fromNode, toNode);
           return false;
       }
 
       if (!createNode) {
-          if (!containsNode(fromNode) || !containsNode(toNode)){
+          if (!containsNode(fromNode) || !containsNode(toNode)){ //开始节点和结束节点必须存在
               logger.error("edge fromNode({}) or toNode({}) is not in vertices map", fromNode, toNode);
               return false;
           }
       }
 
       // Whether an edge can be successfully added(fromNode -> toNode),need to determine whether the DAG has cycle!
-      int verticesCount = getNodesCount();
+      int verticesCount = getNodesCount(); //节点个数
 
       Queue<Node> queue = new LinkedList<>();
 
-      queue.add(toNode);
+      queue.add(toNode); //从往后往前？错，是从目标节点往后找，看是否能找到原节点
 
       // if DAG doesn't find fromNode, it's not has cycle!
       while (!queue.isEmpty() && (--verticesCount > 0)) {
           Node key = queue.poll();
 
-          for (Node subsequentNode : getSubsequentNodes(key)) {
-              if (subsequentNode.equals(fromNode)) {
+          for (Node subsequentNode : getSubsequentNodes(key)) {  // 找当前节点的后续节点，只找了一层
+              if (subsequentNode.equals(fromNode)) { //后续有一个节点和 源节点相等了，说明有环
                   return false;
               }
 
-              queue.add(subsequentNode);
+              queue.add(subsequentNode);//又加到队列中，也就是一直往后找，直到队列为空了；
           }
       }
 
@@ -425,6 +428,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
 
 
   /**
+   * 某个节点的 "邻居" 节点，可以往前找，也可以往后找，但是只找一层
    * Get all neighbor nodes of the node
    *
    * @param node   Node id to be calculated
@@ -432,7 +436,7 @@ public class DAG<Node, NodeInfo, EdgeInfo> {
    * @return all neighbor nodes of the node
    */
   private Set<Node> getNeighborNodes(Node node, final Map<Node, Map<Node, EdgeInfo>> edges) {
-    final Map<Node, EdgeInfo> neighborEdges = edges.get(node);
+    final Map<Node, EdgeInfo> neighborEdges = edges.get(node); //这个节点后续连接的节点； 就找了一层啊；
 
     if (neighborEdges == null) {
       return Collections.EMPTY_MAP.keySet();

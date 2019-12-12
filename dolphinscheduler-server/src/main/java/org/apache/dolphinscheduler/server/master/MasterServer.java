@@ -149,14 +149,15 @@ public class MasterServer extends AbstractServer {
                 processDao,conf,
                 masterExecThreadNum);
 
-        // submit master scheduler thread
+        // submit master scheduler thread  开启调度线程(扫描Command的线程)
         masterSchedulerService.execute(masterSchedulerThread);
 
+        // 开启quart的调度，接收用户对项目配置的调度规则，然后生成Command，这里结束，上面的
         // start QuartzExecutors
         // what system should do if exception
         try {
-            ProcessScheduleJob.init(processDao);
-            QuartzExecutors.getInstance().start();
+            ProcessScheduleJob.init(processDao);  //ProcessScheduleJob是这个平台的Job执行抽象；在这就直接创建了
+            QuartzExecutors.getInstance().start(); //quartz的服务直接启动；
         } catch (Exception e) {
             try {
                 QuartzExecutors.getInstance().shutdown();

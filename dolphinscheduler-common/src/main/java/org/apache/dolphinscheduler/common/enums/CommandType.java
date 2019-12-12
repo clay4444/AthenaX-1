@@ -46,7 +46,7 @@ public enum CommandType {
     RECOVER_SUSPENDED_PROCESS(3, "recover suspended process"),
     START_FAILURE_TASK_PROCESS(4, "start process from failure task nodes"),//从失败的节点运行流程实例
     COMPLEMENT_DATA(5, "complement data"),
-    SCHEDULER(6, "start a new process from scheduler"),
+    SCHEDULER(6, "start a new process from scheduler"), //quartz 调度产生的Command是这种类型的
     REPEAT_RUNNING(7, "repeat running a process"),
     PAUSE(8, "pause a process"),
     STOP(9, "stop a process"),

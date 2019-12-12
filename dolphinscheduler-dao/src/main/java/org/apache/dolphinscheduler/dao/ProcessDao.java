@@ -113,6 +113,8 @@ public class ProcessDao {
      * 然后插入一条当前流程实例需要容错的Command，
      * 然后在这里又把这个Command重新转化为了流程实例
      *
+     * quartz正常调度的话，也是生成一个Command，然后在这里构建流程实例
+     *
      * handle Command (construct ProcessInstance from Command) , wrapped in transaction
      * @param logger logger
      * @param host host
@@ -122,7 +124,7 @@ public class ProcessDao {
      */
     @Transactional(rollbackFor = Exception.class)
     public ProcessInstance handleCommand(Logger logger, String host, int validThreadNum, Command command) {
-        ProcessInstance processInstance = constructProcessInstance(command, host); //构建一个流程实例？
+        ProcessInstance processInstance = constructProcessInstance(command, host); //构建一个流程实例？ 是的
         //cannot construct process instance, return null;
         if(processInstance == null){
             logger.error("scan command, command parameter is error: %s", command.toString());
@@ -137,7 +139,7 @@ public class ProcessDao {
         processInstance.addHistoryCmd(command.getCommandType());
         saveProcessInstance(processInstance);
         this.setSubProcessParam(processInstance);
-        delCommandByid(command.getId());
+        delCommandByid(command.getId()); //构建完流程实例之后，就把command直接删除了
         return processInstance;
     }
 
@@ -396,6 +398,7 @@ public class ProcessDao {
     }
 
     /**
+     * 通过quartz每次调度生成的Command，构建一个流程实例
      * generate a new work process instance from command.
      * @param processDefinition processDefinition
      * @param command command
@@ -405,16 +408,16 @@ public class ProcessDao {
     private ProcessInstance generateNewProcessInstance(ProcessDefinition processDefinition,
                                                        Command command,
                                                        Map<String, String> cmdParam){
-        ProcessInstance processInstance = new ProcessInstance(processDefinition);
-        processInstance.setState(ExecutionStatus.RUNNING_EXEUTION);
+        ProcessInstance processInstance = new ProcessInstance(processDefinition); //对应的流程定义
+        processInstance.setState(ExecutionStatus.RUNNING_EXEUTION); //状态为提交成功
         processInstance.setRecovery(Flag.NO);
-        processInstance.setStartTime(new Date());
+        processInstance.setStartTime(new Date()); //开始时间为当前时间
         processInstance.setRunTimes(1);
         processInstance.setMaxTryTimes(0);
         processInstance.setProcessDefinitionId(command.getProcessDefinitionId());
-        processInstance.setCommandParam(command.getCommandParam());
-        processInstance.setCommandType(command.getCommandType());
-        processInstance.setIsSubProcess(Flag.NO);
+        processInstance.setCommandParam(command.getCommandParam()); //CommanParam没有赋值啊,是的，没有设置参数的命令都为空
+        processInstance.setCommandType(command.getCommandType()); //command类型，Schedule quartz调度产生；
+        processInstance.setIsSubProcess(Flag.NO); //不是子流程
         processInstance.setTaskDependType(command.getTaskDependType());
         processInstance.setFailureStrategy(command.getFailureStrategy());
         processInstance.setExecutorId(command.getExecutorId());
@@ -490,6 +493,7 @@ public class ProcessDao {
 
     /**
      * 通过Command 的类型(容错的/从某个节点开始运行啊 等等) 和 Host(本机master ip) 创建一个流程实例；
+     * 正常的quartz的Scheduler调度也会生成Command，这里会创建一个新的流程实例
      *
      * construct process instance according to one command.
      * @param command command
@@ -498,11 +502,11 @@ public class ProcessDao {
      */
     private ProcessInstance constructProcessInstance(Command command, String host){
 
-        ProcessInstance processInstance = null;
+        ProcessInstance processInstance = null;  //要返回的结果
         CommandType commandType = command.getCommandType();
         Map<String, String> cmdParam = JSONUtils.toMap(command.getCommandParam());  //参数
 
-        ProcessDefinition processDefinition = null; //对应的流程定义
+        ProcessDefinition processDefinition = null; //确保这个Command有对应的流程定义
         if(command.getProcessDefinitionId() != 0){ //因为0是默认值
             processDefinition = processDefineMapper.selectById(command.getProcessDefinitionId());
             if(processDefinition == null){
@@ -511,7 +515,7 @@ public class ProcessDao {
             }
         }
 
-        if(cmdParam != null ){
+        if(cmdParam != null ){  //正常由quartz的Scheduler创建的话，cmdParam是null的
             Integer processInstanceId = 0;
             // recover from failure or pause tasks
             if(cmdParam.containsKey(Constants.CMDPARAM_RECOVER_PROCESS_ID_STRING)) {  //包含 ProcessInstanceId，可能是说明这个流程实例是需要被容错的
@@ -551,9 +555,9 @@ public class ProcessDao {
             if(cmdParam.containsKey(Constants.CMDPARAM_SUB_PROCESS)){
                 processInstance.setCommandParam(command.getCommandParam());
             }
-        }else{
+        }else{  //正常由quartz的Scheduler创建的话，cmdParam是null的，进else
             // generate one new process instance
-            processInstance = generateNewProcessInstance(processDefinition, command, cmdParam);
+            processInstance = generateNewProcessInstance(processDefinition, command, cmdParam); //正常quartz调度，生成新的流程实例
         }
         if(!checkCmdParam(command, cmdParam)){
             logger.error("command parameter check failed!");
@@ -636,7 +640,7 @@ public class ProcessDao {
                 processInstance.setRunTimes(runTime +1);
                 initComplementDataParam(processDefinition, processInstance, cmdParam);
                 break;
-            case SCHEDULER:
+            case SCHEDULER:  //正常quartz的scheduler调度产生的，是这种类型，直接过了
                 break;
             default:
                 break;

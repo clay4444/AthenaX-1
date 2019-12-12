@@ -67,7 +67,7 @@ public class MasterExecThread implements Runnable {
     /**
      * process instance
      */
-    private ProcessInstance processInstance;
+    private ProcessInstance processInstance;  //对应一个流程实例
 
     /**
      *  runing TaskNode
@@ -125,7 +125,7 @@ public class MasterExecThread implements Runnable {
     private AlertManager alertManager = new AlertManager();
 
     /**
-     * the object of DAG
+     * the object of DAG   最终的DAG，内部其实就是三个map
      */
     private DAG<String,TaskNode,TaskNodeRelation> dag;
 
@@ -147,18 +147,21 @@ public class MasterExecThread implements Runnable {
     public MasterExecThread(ProcessInstance processInstance,ProcessDao processDao){
         this.processDao = processDao;
 
-        this.processInstance = processInstance;
+        this.processInstance = processInstance; //这个线程要执行的流程实例；
 
+        //根据master上可以执行的任务的个数，
         int masterTaskExecNum = conf.getInt(Constants.MASTER_EXEC_TASK_THREADS,
                 Constants.defaultMasterTaskExecNum);
+
+        //又创建了一个线程池？？？？  是的，也就是说这一个master执行线程，
         this.taskExecService = ThreadUtils.newDaemonFixedThreadExecutor("Master-Task-Exec-Thread",
-                masterTaskExecNum);
+                masterTaskExecNum);  //
     }
 
 
     static {
         try {
-            conf = new PropertiesConfiguration(Constants.MASTER_PROPERTIES_PATH);
+            conf = new PropertiesConfiguration(Constants.MASTER_PROPERTIES_PATH); //创建完就读配置
         }catch (ConfigurationException e){
             logger.error("load configuration failed : " + e.getMessage(),e);
             System.exit(1);
@@ -166,8 +169,9 @@ public class MasterExecThread implements Runnable {
     }
 
     @Override
-    public void run() {
+    public void run() {  //创建完立即执行
 
+        //检查
         // process instance is null
         if (processInstance == null){
             logger.info("process instance is not exists");
@@ -185,7 +189,7 @@ public class MasterExecThread implements Runnable {
                 // sub process complement data
                 executeComplementProcess();
             }else{
-                // execute flow
+                // execute flow   >>>>>>> 入口：这里，具体执行这个流程实例
                 executeProcess();
             }
         }catch (Exception e){
@@ -202,12 +206,21 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 具体执行这个流程实例
      * execute process
      * @throws Exception excpetion
      */
     private void executeProcess() throws Exception {
+
+        //第一步，准备执行，
+        //1. 清理 activeTaskNode，dependFailedTask，completeTaskList 等几个集合，2. 构建DAG
         prepareProcess();
+
+        //第二步，开始执行
+        //1. 提交和监控该流程实例的所有task，直到流程图终止了；
         runProcess();
+
+
         endProcess();
     }
 
@@ -293,10 +306,10 @@ public class MasterExecThread implements Runnable {
      */
     private void prepareProcess() throws Exception {
         // init task queue
-        initTaskQueue();
+        initTaskQueue();  // 初始化 activeTaskNode，dependFailedTask，completeTaskList 等几个集合，正常被quartz调度的情况下就是清理了；
 
         // gen process dag
-        buildFlowDag();
+        buildFlowDag();  // 构建DAG流程；
         logger.info("prepare process :{} end", processInstance.getId());
     }
 
@@ -316,16 +329,18 @@ public class MasterExecThread implements Runnable {
 
 
     /**
-     *  generate process dag
+     *  generate process dag  构建流程实例的DAG，
      * @throws Exception excpetion
      */
     private void buildFlowDag() throws Exception {
-        recoverNodeIdList = getStartTaskInstanceList(processInstance.getCommandParam());
+        recoverNodeIdList = getStartTaskInstanceList(processInstance.getCommandParam());  //空
 
-        forbiddenTaskList = DagHelper.getForbiddenTaskNodeMaps(processInstance.getProcessInstanceJson());
+        forbiddenTaskList = DagHelper.getForbiddenTaskNodeMaps(processInstance.getProcessInstanceJson()); //禁止执行的任务  空
         // generate process to get DAG info
-        List<String> recoveryNameList = getRecoveryNodeNameList();
-        List<String> startNodeNameList = parseStartNodeName(processInstance.getCommandParam());
+        List<String> recoveryNameList = getRecoveryNodeNameList(); //错误恢复的任务 空
+        List<String> startNodeNameList = parseStartNodeName(processInstance.getCommandParam()); //从哪些节点开始执行 空， 用户可能从某些中间任务执行；
+
+        //DAG逻辑图，只包含所有的节点，所有的边
         ProcessDag processDag = generateFlowDag(processInstance.getProcessInstanceJson(),
                 startNodeNameList, recoveryNameList, processInstance.getTaskDependType());
         if(processDag == null){
@@ -333,12 +348,13 @@ public class MasterExecThread implements Runnable {
             return;
         }
         // generate process dag
+        //生成最终的DAG，里面其实就是3个Map
         dag = DagHelper.buildDagGraph(processDag);
 
     }
 
     /**
-     * init task queue
+     * init task queue  初始化 activeTaskNode，dependFailedTask，completeTaskList 等几个集合
      */
     private void initTaskQueue(){
 
@@ -347,6 +363,8 @@ public class MasterExecThread implements Runnable {
         dependFailedTask.clear();
         completeTaskList.clear();
         errorTaskList.clear();
+
+        //找到所有的任务实例，还没调度呢就有吗？？？？？  一开始还
         List<TaskInstance> taskInstanceList = processDao.findValidTaskListByProcessId(processInstance.getId());
         for(TaskInstance task : taskInstanceList){
             if(task.isTaskComplete()){
@@ -469,6 +487,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 获取dag图中parentNodeName该节点的后继节点；
      * get post task instance by node
      * @param dag               dag
      * @param parentNodeName    parent node name
@@ -476,7 +495,7 @@ public class MasterExecThread implements Runnable {
      */
     private List<TaskInstance> getPostTaskInstanceByNode(DAG<String, TaskNode, TaskNodeRelation> dag, String parentNodeName){
 
-        List<TaskInstance> postTaskList = new ArrayList<>();
+        List<TaskInstance> postTaskList = new ArrayList<>(); //结果
         Collection<String> startVertex = DagHelper.getStartVertex(parentNodeName, dag, completeTaskList);
         if(startVertex == null){
             return postTaskList;
@@ -492,6 +511,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 返回dag中的源节点(没有输入的任务节点)
      * return start task node list
      * @return task instance list
      */
@@ -524,14 +544,15 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 提交某个节点的后续节点，parentNodeName为null，说明提交源节点
      * submit post node
      * @param parentNodeName parent node name
      */
-    private void submitPostNode(String parentNodeName){
+    private void submitPostNode(String parentNodeName){  // null
 
         List<TaskInstance> submitTaskList = null;
         if(parentNodeName == null){
-            submitTaskList = getStartSubmitTaskList();
+            submitTaskList = getStartSubmitTaskList(); //
         }else{
             submitTaskList = getPostTaskInstanceByNode(dag, parentNodeName);
         }
@@ -820,11 +841,12 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 提交和监控该流程实例的所有task，直到流程图终止了；
      * submit and watch the tasks, until the work flow stop
      */
     private void runProcess(){
         // submit start node
-        submitPostNode(null);
+        submitPostNode(null);//提交后续节点，父节点为null，说明提交首节点，先提交首节点
         boolean sendTimeWarning = false;
         while(!processInstance.IsProcessInstanceStop()){
 
@@ -1052,6 +1074,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 奥，解析开始执行的任务节点； 因为允许从某些中间任务节点开始往后执行；
      * parse "StartNodeNameList" from cmd param
      * @param cmdParam command param
      * @return start node name list
@@ -1069,6 +1092,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * recoveryNodeNameList 错误恢复的task
      * generate start node name list from parsing command param;
      * if "StartNodeIdList" exists in command param, return StartNodeIdList
      * @return recovery node name list
@@ -1084,6 +1108,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 生成流程实例DAG，叫做ProcessDag，只包含所有的任务节点，所有边；
      * generate flow dag
      * @param processDefinitionJson process definition json
      * @param startNodeNameList     start node name list
@@ -1092,10 +1117,10 @@ public class MasterExecThread implements Runnable {
      * @return ProcessDag           process dag
      * @throws Exception            exception
      */
-    public ProcessDag generateFlowDag(String processDefinitionJson,
-                                      List<String> startNodeNameList,
-                                      List<String> recoveryNodeNameList,
-                                      TaskDependType depNodeType)throws Exception{
+    public ProcessDag generateFlowDag(String processDefinitionJson,   //流程实例json，元数据都在这里
+                                      List<String> startNodeNameList,  //从哪些任务开始启动   空
+                                      List<String> recoveryNodeNameList,  //哪些任务是错误恢复的    空
+                                      TaskDependType depNodeType)throws Exception{  //正常是2，即跑当前任务和后面的任务
         return DagHelper.generateFlowDag(processDefinitionJson, startNodeNameList, recoveryNodeNameList, depNodeType);
     }
 }

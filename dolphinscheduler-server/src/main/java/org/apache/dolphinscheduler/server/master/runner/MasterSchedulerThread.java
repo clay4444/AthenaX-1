@@ -108,7 +108,7 @@ public class MasterSchedulerThread implements Runnable {
                         // create distributed lock with the root node path of the lock space as /dolphinscheduler/lock/failover/master
                         String znodeLock = zkMasterClient.getMasterLockPath();
 
-                        mutex = new InterProcessMutex(zkMasterClient.getZkClient(), znodeLock); //这里为什么要使用master容错锁呢？
+                        mutex = new InterProcessMutex(zkMasterClient.getZkClient(), znodeLock); //这里为什么要使用master容错锁呢？不是容错锁，注释写错了
                         mutex.acquire();
 
                         ThreadPoolExecutor poolExecutor = (ThreadPoolExecutor) masterExecService;
@@ -119,10 +119,11 @@ public class MasterSchedulerThread implements Runnable {
                             logger.info(String.format("find one command: id: %d, type: %s", command.getId(),command.getCommandType().toString()));
 
                             try{
+                                //把一个Command命令转化为一个流程实例，不管是容错还是正常的quartz调度，都是先生成Command，然后被这里扫到；执行；
                                 processInstance = processDao.handleCommand(logger, OSUtils.getHost(), this.masterExecThreadNum - activeCount, command);
                                 if (processInstance != null) {
                                     logger.info("start master exec thread , split DAG ...");
-                                    masterExecService.execute(new MasterExecThread(processInstance,processDao));
+                                    masterExecService.execute(new MasterExecThread(processInstance,processDao)); //Master 真正执行；
                                 }
                             }catch (Exception e){
                                 logger.error("scan command error ", e);

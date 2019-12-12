@@ -34,6 +34,7 @@ import java.util.Objects;
 
 /**
  * 这个应该是和Graph图相关的；
+ * 是 processDefinitionJson json 数据中的tasks属性对应的类
  */
 public class TaskNode {
 
@@ -58,7 +59,7 @@ public class TaskNode {
   private String type;
 
   /**
-   * the run flag has two states, NORMAL or FORBIDDEN
+   * the run flag has two states, NORMAL or FORBIDDEN   一般正常都是NORMAL
    */
   private String runFlag;
 
@@ -79,6 +80,7 @@ public class TaskNode {
 
   /**
    * params information
+   * 任务的实际代码都在这里；
    */
   @JsonDeserialize(using = JSONUtils.JsonDataDeserializer.class)
   @JsonSerialize(using = JSONUtils.JsonDataSerializer.class)

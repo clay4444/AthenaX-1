@@ -53,7 +53,7 @@ public class Command {
     private int processDefinitionId;
 
     /**
-     * executor id
+     * executor id   取的是Scheduler的创建人，这里也就代表这条Command的执行人呗，，，
      */
     @TableField("executor_id")
     private int executorId;

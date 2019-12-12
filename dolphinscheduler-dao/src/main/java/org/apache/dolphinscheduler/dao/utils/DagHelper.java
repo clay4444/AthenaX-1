@@ -43,6 +43,7 @@ public class DagHelper {
 
 
     /**
+     * 构建DAG需要的所有任务节点之间的边
      * generate flow node relation list by task node list;
      * Edges that are not in the task Node List will not be added to the result
      * @param taskNodeList taskNodeList
@@ -51,12 +52,12 @@ public class DagHelper {
     public static List<TaskNodeRelation> generateRelationListByFlowNodes(List<TaskNode> taskNodeList) {
         List<TaskNodeRelation> nodeRelationList = new ArrayList<>();
         for (TaskNode taskNode : taskNodeList) {
-            String preTasks = taskNode.getPreTasks();
+            String preTasks = taskNode.getPreTasks();  //也是从后往前找
             List<String> preTaskList = JSONUtils.toList(preTasks, String.class);
-            if (preTaskList != null) {
+            if (preTaskList != null) { //有前置节点
                 for (String depNodeName : preTaskList) {
                     if (null != findNodeByName(taskNodeList, depNodeName)) {
-                        nodeRelationList.add(new TaskNodeRelation(depNodeName, taskNode.getName()));
+                        nodeRelationList.add(new TaskNodeRelation(depNodeName, taskNode.getName())); //添加一个边
                     }
                 }
             }
@@ -65,6 +66,7 @@ public class DagHelper {
     }
 
     /**
+     * 生成构建dag需要的Task节点，正常还是返回了taskNodeList
      * generate task nodes needed by dag
      * @param taskNodeList taskNodeList
      * @param startNodeNameList startNodeNameList
@@ -75,7 +77,7 @@ public class DagHelper {
     public static List<TaskNode> generateFlowNodeListByStartNode(List<TaskNode> taskNodeList, List<String> startNodeNameList,
                                                                  List<String> recoveryNodeNameList, TaskDependType taskDependType) {
         List<TaskNode> destFlowNodeList = new ArrayList<>();
-        List<String> startNodeList = startNodeNameList;
+        List<String> startNodeList = startNodeNameList;  //指定的开始节点，空
 
         if(taskDependType != TaskDependType.TASK_POST
                 && startNodeList.size() == 0){
@@ -85,11 +87,11 @@ public class DagHelper {
         List<TaskNode> destTaskNodeList = new ArrayList<>();
         List<TaskNode> tmpTaskNodeList = new ArrayList<>();
         if (taskDependType == TaskDependType.TASK_POST
-                && recoveryNodeNameList.size() > 0) {
+                && recoveryNodeNameList.size() > 0) {  //如果有恢复的节点，就从这些恢复的节点开始；
             startNodeList = recoveryNodeNameList;
         }
         if (startNodeList == null || startNodeList.size() == 0) {
-            // no special designation start nodes
+            // no special designation start nodes  用户没有指定起始任务
             tmpTaskNodeList = taskNodeList;
         } else {
             // specified start nodes or resume execution
@@ -107,12 +109,12 @@ public class DagHelper {
             }
         }
 
-        for (TaskNode taskNode : tmpTaskNodeList) {
+        for (TaskNode taskNode : tmpTaskNodeList) {  //正常tmpTaskNodeList就是所有借点！
             if (null == findNodeByName(destTaskNodeList, taskNode.getName())) {
                 destTaskNodeList.add(taskNode);
             }
         }
-        return destTaskNodeList;
+        return destTaskNodeList; //正常返回的还是所有任!
     }
 
 
@@ -166,6 +168,7 @@ public class DagHelper {
     }
 
     /**
+     * >>>>>> 核心，生成流程实例
      * generate dag by start nodes and recovery nodes
      * @param processDefinitionJson processDefinitionJson
      * @param startNodeNameList startNodeNameList
@@ -174,32 +177,37 @@ public class DagHelper {
      * @return process dag
      * @throws Exception if error throws Exception
      */
-    public static ProcessDag generateFlowDag(String processDefinitionJson,
-                                             List<String> startNodeNameList,
-                                             List<String> recoveryNodeNameList,
-                                             TaskDependType depNodeType) throws Exception {
-        ProcessData processData = JSONUtils.parseObject(processDefinitionJson, ProcessData.class);
+    public static ProcessDag generateFlowDag(String processDefinitionJson,    //流程实例json，元数据都在这里
+                                             List<String> startNodeNameList,    //从哪些任务开始启动   空
+                                             List<String> recoveryNodeNameList,  //哪些任务是错误恢复的    空
+                                             TaskDependType depNodeType) throws Exception {  //正常是2，即跑当前任务和后面的任务
+        ProcessData processData = JSONUtils.parseObject(processDefinitionJson, ProcessData.class);  //json 转化为类
 
-        List<TaskNode> taskNodeList = processData.getTasks();
+        List<TaskNode> taskNodeList = processData.getTasks(); //所有的任务
+
+        //构建DAG需要的所有任务节点，正常还是所有的TaskNode，其他情况先跳过
         List<TaskNode> destTaskNodeList = generateFlowNodeListByStartNode(taskNodeList, startNodeNameList, recoveryNodeNameList, depNodeType);
         if (destTaskNodeList.isEmpty()) {
             return null;
         }
+
+        //构建DAG需要的所有任务节点之间的边
         List<TaskNodeRelation> taskNodeRelations = generateRelationListByFlowNodes(destTaskNodeList);
         ProcessDag processDag = new ProcessDag();
-        processDag.setEdges(taskNodeRelations);
-        processDag.setNodes(destTaskNodeList);
+        processDag.setEdges(taskNodeRelations); //所有的节点
+        processDag.setNodes(destTaskNodeList);  //所有的边
         return processDag;
     }
 
     /**
+     * 解析禁止执行的任务
      * parse the forbidden task nodes in process definition.
      * @param processDefinitionJson processDefinitionJson
      * @return task node map
      */
     public static Map<String, TaskNode> getForbiddenTaskNodeMaps(String processDefinitionJson){
         Map<String, TaskNode> forbidTaskNodeMap = new ConcurrentHashMap<>();
-        ProcessData processData = JSONUtils.parseObject(processDefinitionJson, ProcessData.class);
+        ProcessData processData = JSONUtils.parseObject(processDefinitionJson, ProcessData.class); //json映射为类
 
         List<TaskNode> taskNodeList = processData.getTasks();
         for(TaskNode node : taskNodeList){
@@ -212,6 +220,7 @@ public class DagHelper {
 
 
     /**
+     * 通过name找TaskNode
      * find node by node name
      * @param nodeDetails nodeDetails
      * @param nodeName nodeName
@@ -228,6 +237,7 @@ public class DagHelper {
 
 
     /**
+     *
      * get start vertex in one dag
      * it would find the post node if the start vertex is forbidden running
      * @param parentNodeName previous node
@@ -243,9 +253,9 @@ public class DagHelper {
         }
         Collection<String> startVertexs = null;
         if(StringUtils.isNotEmpty(parentNodeName)){
-            startVertexs = dag.getSubsequentNodes(parentNodeName);
+            startVertexs = dag.getSubsequentNodes(parentNodeName);  //dag中找parentNodeName这个节点的后继节点
         }else{
-            startVertexs = dag.getBeginNode();
+            startVertexs = dag.getBeginNode(); //dag中找起始节点
         }
 
         List<String> tmpStartVertexs = new ArrayList<>();
@@ -299,6 +309,9 @@ public class DagHelper {
 
 
     /***
+     * <<<<< 生成最终的三元组 DAG 视图
+     * processDag 包含所有的节点，所有的边
+     *
      * build dag graph
      * @param processDag processDag
      * @return dag
@@ -308,7 +321,7 @@ public class DagHelper {
         DAG<String,TaskNode,TaskNodeRelation> dag = new DAG<>();
 
         /**
-         * add vertex
+         * add vertex  添加节点
          */
         if (CollectionUtils.isNotEmpty(processDag.getNodes())){
             for (TaskNode node : processDag.getNodes()){
@@ -317,7 +330,7 @@ public class DagHelper {
         }
 
         /**
-         * add edge
+         * add edge   添加边， 添加边的时候，会校验是否有环；
          */
         if (CollectionUtils.isNotEmpty(processDag.getEdges())){
             for (TaskNodeRelation edge : processDag.getEdges()){
