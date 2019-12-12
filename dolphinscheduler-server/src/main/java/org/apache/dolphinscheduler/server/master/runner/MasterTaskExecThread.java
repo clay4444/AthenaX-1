@@ -34,7 +34,7 @@ import java.util.Date;
 import static org.apache.dolphinscheduler.common.Constants.DOLPHINSCHEDULER_TASKS_KILL;
 
 /**
- * MasterTaskExecThread主要负责任务的持久化
+ * MasterTaskExecThread 主要负责任务的持久化 (MySql和zk)
  *
  * master task exec thread
  */
@@ -69,24 +69,30 @@ public class MasterTaskExecThread extends MasterBaseTaskExecThread {
     private Boolean alreadyKilled = false;
 
     /**
+     * >>>>> 任务触发提交之后，调用到这里；
+     * 提交任务实例，并且等待完成；  返回是否执行成功
+     * 注意：入口返回的是Future，所以这个提交并等待的过程是异步做的；
+     *
      * submit task instance and wait complete
      * @return true is task quit is true
      */
     @Override
     public Boolean submitWaitComplete() {
         Boolean result = false;
-        this.taskInstance = submit();
+        this.taskInstance = submit(); //提交逻辑，提交完保存到Mysql和zk之后，直接返回了
         if(!this.taskInstance.getState().typeIsFinished()) {
-            result = waitTaskQuit();
+            result = waitTaskQuit(); //然后在这里一直阻塞直到任务被worker执行完了；
         }
         taskInstance.setEndTime(new Date());
-        processDao.updateTaskInstance(taskInstance);
+        processDao.updateTaskInstance(taskInstance); //更新mysql中的Task状态
         logger.info("task :{} id:{}, process id:{}, exec thread completed ",
                 this.taskInstance.getName(),taskInstance.getId(), processInstance.getId() );
-        return result;
+        return result; //返回是否执行成功；
     }
 
     /**
+     * 阻塞直到任务被worker执行完了；状态为完成了；
+     *
      * wait task quit
      * @return true if task quit success
      */
@@ -110,11 +116,11 @@ public class MasterTaskExecThread extends MasterBaseTaskExecThread {
                     return true;
                 }
                 // task instance add queue , waiting worker to kill
-                if(this.cancel || this.processInstance.getState() == ExecutionStatus.READY_STOP){
+                if(this.cancel || this.processInstance.getState() == ExecutionStatus.READY_STOP){ //流程实例挂了，要注意取消任务
                     cancelTaskInstance();
                 }
                 // task instance finished
-                if (taskInstance.getState().typeIsFinished()){
+                if (taskInstance.getState().typeIsFinished()){ //2.Task的状态为完成了，跳出循环
                     break;
                 }
                 if(checkTimeout){
@@ -129,8 +135,8 @@ public class MasterTaskExecThread extends MasterBaseTaskExecThread {
                     }
                 }
                 // updateProcessInstance task instance
-                taskInstance = processDao.findTaskInstanceById(taskInstance.getId());
-                processInstance = processDao.findProcessInstanceById(processInstance.getId());
+                taskInstance = processDao.findTaskInstanceById(taskInstance.getId());   //1.这里每次更新Task的状态
+                processInstance = processDao.findProcessInstanceById(processInstance.getId());  //这里每次更新流程实例的状态
                 Thread.sleep(Constants.SLEEP_TIME_MILLIS);
             } catch (Exception e) {
                 logger.error("exception: "+ e.getMessage(),e);

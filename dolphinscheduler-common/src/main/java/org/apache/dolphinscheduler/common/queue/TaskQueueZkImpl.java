@@ -82,9 +82,10 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
     }
 
     /**
+     * 检查某个Task是否已存在
      * check task exists in the task queue or not
      *
-     * @param key       queue name
+     * @param key       queue name  >  "tasks_queue"
      * @param task      ${processInstancePriority}_${processInstanceId}_${taskInstancePriority}_${taskId}
      * @return true if exists in the queue
      */
@@ -112,9 +113,10 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
 
 
     /**
+     * 往队列中加Task，注意节点类型为持久化的，不会自动删除；
      * add task to tasks queue
      *
-     * @param key      task queue name
+     * @param key      task queue name   "tasks_queue"
      * @param value    ${processInstancePriority}_${processInstanceId}_${taskInstancePriority}_${taskId}_host1,host2,...
      */
     @Override

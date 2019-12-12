@@ -217,10 +217,11 @@ public class MasterExecThread implements Runnable {
         prepareProcess();
 
         //第二步，开始执行
-        //1. 提交和监控该流程实例的所有task，直到流程图终止了；
+        //1. 按照dag的整个流程，提交和监控该流程实例的所有task，直到流程图终止了；
         runProcess();
 
-
+        //第三步，此时整个流程实例中所有的Task都执行完了，
+        //这里只是更新了Mysql库中的一些状态而已；
         endProcess();
     }
 
@@ -315,10 +316,11 @@ public class MasterExecThread implements Runnable {
 
 
     /**
+     * 流程实例结束的handler，修改了Mysql库中的一些状态而已；
      * process end handle
      */
     private void endProcess() {
-        processInstance.setEndTime(new Date());
+        processInstance.setEndTime(new Date()); //结束时间
         processDao.updateProcessInstance(processInstance);
         if(processInstance.getState().typeIsWaittingThread()){
             processDao.createRecoveryWaitingThreadCommand(null, processInstance);
@@ -398,32 +400,36 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * >>>>> 触发提交任务到zk 队列
+     *
      * submit task to execute
      * @param taskInstance task instance
      * @return TaskInstance
      */
     private TaskInstance submitTaskExec(TaskInstance taskInstance) {
-        MasterBaseTaskExecThread abstractExecThread = null;
+        MasterBaseTaskExecThread abstractExecThread = null;    //用这个线程去跑的；
         if(taskInstance.isSubProcess()){
             abstractExecThread = new SubProcessTaskExecThread(taskInstance, processInstance);
         }else {
-            abstractExecThread = new MasterTaskExecThread(taskInstance, processInstance);
+            abstractExecThread = new MasterTaskExecThread(taskInstance, processInstance);  //MasterTaskExecThread 不是任务持久化的线程吗，是啊，持久化到MySql和zk啊；
         }
-        Future<Boolean> future = taskExecService.submit(abstractExecThread);
-        activeTaskNode.putIfAbsent(abstractExecThread, future);
+        Future<Boolean> future = taskExecService.submit(abstractExecThread); //线程池提交
+        activeTaskNode.putIfAbsent(abstractExecThread, future);  //在这里加到activeTaskNode，活跃的Task中； 注意加的是一个Future，值是boolean类型，代表是否执行成功
         return abstractExecThread.getTaskInstance();
     }
 
     /**
+     * 一个流程实例中不能存在两个同样名字的Task
+     *
      * find task instance in db.
      * in case submit more than one same name task in the same time.
      * @param taskName task name
      * @return TaskInstance
      */
     private TaskInstance findTaskIfExists(String taskName){
-        List<TaskInstance> taskInstanceList = processDao.findValidTaskListByProcessId(this.processInstance.getId());
+        List<TaskInstance> taskInstanceList = processDao.findValidTaskListByProcessId(this.processInstance.getId()); //先根据该流程实例找所有TaskInstance
         for(TaskInstance taskInstance : taskInstanceList){
-            if(taskInstance.getName().equals(taskName)){
+            if(taskInstance.getName().equals(taskName)){ //所以一个流程实例中不能存在两个同样名字的Task
                 return taskInstance;
             }
         }
@@ -431,6 +437,8 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 根据TaskNode 封装为 TaskInstance
+     *
      * encapsulation task
      * @param processInstance   process instance
      * @param nodeName          node name
@@ -443,22 +451,22 @@ public class MasterExecThread implements Runnable {
         if(taskInstance == null){
             taskInstance = new TaskInstance();
             // task name
-            taskInstance.setName(nodeName);
+            taskInstance.setName(nodeName); //TaskName就是TaskNode name
             // process instance define id
-            taskInstance.setProcessDefinitionId(processInstance.getProcessDefinitionId());
+            taskInstance.setProcessDefinitionId(processInstance.getProcessDefinitionId());  //属于哪个流程定义
             // task instance state
-            taskInstance.setState(ExecutionStatus.SUBMITTED_SUCCESS);
+            taskInstance.setState(ExecutionStatus.SUBMITTED_SUCCESS);  //初始状态为提交成功
             // process instance id
-            taskInstance.setProcessInstanceId(processInstance.getId());
+            taskInstance.setProcessInstanceId(processInstance.getId());  //属于哪个流程实例
             // task instance node json
-            taskInstance.setTaskJson(JSONObject.toJSONString(taskNode));
+            taskInstance.setTaskJson(JSONObject.toJSONString(taskNode));  //该TaskNode所有属性组成的json串
             // task instance type
-            taskInstance.setTaskType(taskNode.getType());
+            taskInstance.setTaskType(taskNode.getType());  //任务类型
             // task instance whether alert
             taskInstance.setAlertFlag(Flag.NO);
 
             // task instance start time
-            taskInstance.setStartTime(new Date());
+            taskInstance.setStartTime(new Date());  //开始时间
 
             // task instance flag
             taskInstance.setFlag(Flag.YES);
@@ -487,7 +495,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
-     * 获取dag图中parentNodeName该节点的后继节点；
+     * 获取dag图中parentNodeName该节点的所有可以运行的后继节点；  然后封装为具体的 任务实例 TaskInstance
      * get post task instance by node
      * @param dag               dag
      * @param parentNodeName    parent node name
@@ -496,7 +504,7 @@ public class MasterExecThread implements Runnable {
     private List<TaskInstance> getPostTaskInstanceByNode(DAG<String, TaskNode, TaskNodeRelation> dag, String parentNodeName){
 
         List<TaskInstance> postTaskList = new ArrayList<>(); //结果
-        Collection<String> startVertex = DagHelper.getStartVertex(parentNodeName, dag, completeTaskList);
+        Collection<String> startVertex = DagHelper.getStartVertex(parentNodeName, dag, completeTaskList); //dag 图中 parentNodeName 的后继节点
         if(startVertex == null){
             return postTaskList;
         }
@@ -504,38 +512,39 @@ public class MasterExecThread implements Runnable {
         for (String nodeName : startVertex){
             // encapsulation task instance
             TaskInstance taskInstance = createTaskInstance(processInstance, nodeName ,
-                    dag.getNode(nodeName),parentNodeName);
+                    dag.getNode(nodeName),parentNodeName);      //使用TaskNode构建TaskInstance；
             postTaskList.add(taskInstance);
         }
         return postTaskList;
     }
 
     /**
-     * 返回dag中的源节点(没有输入的任务节点)
+     * 返回dag中的源节点(没有输入的任务节点)，返回所有已经成功提交并且等待执行的 TaskInstance
      * return start task node list
      * @return task instance list
      */
     private List<TaskInstance> getStartSubmitTaskList(){
 
-        List<TaskInstance> startTaskList = getPostTaskInstanceByNode(dag, null);
+        List<TaskInstance> startTaskList = getPostTaskInstanceByNode(dag, null); //找所有没有前置依赖任务的Task，
 
-        HashMap<String, TaskInstance> successTaskMaps = new HashMap<>();
+        HashMap<String, TaskInstance> successTaskMaps = new HashMap<>();  //执行成功的Task
         List<TaskInstance> resultList = new ArrayList<>();
         while(Stopper.isRunning()){
             for(TaskInstance task : startTaskList){
-                if(task.getState().typeIsSuccess()){
+                if(task.getState().typeIsSuccess()){  //Task任务已经正常执行成功；
                     successTaskMaps.put(task.getName(), task);
                 }else if(!completeTaskList.containsKey(task.getName()) && !errorTaskList.containsKey(task.getName())){
-                    resultList.add(task);
+                    resultList.add(task); //既没有完成，也没有错误，就加到  resultList，  正常调度的应该都在这里把，都还没加到执行队列呢；
                 }
             }
             startTaskList.clear();
             if(successTaskMaps.size() == 0){
-                break;
+                break;  //直到找不到成功的任务了，终止；此时resultList保存的就是所有已经成功提交等待执行的 TaskInstance
             }
 
             Set<String> taskNameKeys = successTaskMaps.keySet();
             for(String taskName : taskNameKeys){
+                //找所有已经成功任务的后继节点，加到startTaskList，然后while又找这些后继节点中不是完成也没有错误的节点，加到resultList
                 startTaskList.addAll(getPostTaskInstanceByNode(dag, taskName));
             }
             successTaskMaps.clear();
@@ -544,7 +553,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
-     * 提交某个节点的后续节点，parentNodeName为null，说明提交源节点
+     * 提交某个节点的后续节点，parentNodeName为null，说明提交源节点，没有真正提交，只是保存到 readyToSubmitTaskList 集合中了；
      * submit post node
      * @param parentNodeName parent node name
      */
@@ -552,7 +561,7 @@ public class MasterExecThread implements Runnable {
 
         List<TaskInstance> submitTaskList = null;
         if(parentNodeName == null){
-            submitTaskList = getStartSubmitTaskList(); //
+            submitTaskList = getStartSubmitTaskList(); // 返回所有已经成功提交(不是真正提交，只是保存到readyToSubmitTaskList集合了)并且等待执行的 TaskInstance
         }else{
             submitTaskList = getPostTaskInstanceByNode(dag, parentNodeName);
         }
@@ -569,12 +578,13 @@ public class MasterExecThread implements Runnable {
             if(task.getState().typeIsPause() || task.getState().typeIsCancel()){
                 logger.info("task {} stopped, the state is {}", task.getName(), task.getState().toString());
             }else{
-                addTaskToStandByList(task);
+                addTaskToStandByList(task); //加到 readyToSubmitTaskList(所有准备提交的Task)；
             }
         }
     }
 
     /**
+     * 检查Task的所有依赖是否已经完成了；
      * determine whether the dependencies of the task node are complete
      * @return DependResult
      */
@@ -582,26 +592,26 @@ public class MasterExecThread implements Runnable {
 
         Collection<String> startNodes = dag.getBeginNode();
         // ff the vertex returns true directly
-        if(startNodes.contains(taskName)){
-            return DependResult.SUCCESS;
+        if(startNodes.contains(taskName)){ //如果没有依赖
+            return DependResult.SUCCESS; //直接返回true
         }
 
         TaskNode taskNode = dag.getNode(taskName);
         List<String> depsNameList = taskNode.getDepList();
         for(String depsNode : depsNameList ){
 
-            if(forbiddenTaskList.containsKey(depsNode)){
+            if(forbiddenTaskList.containsKey(depsNode)){ //依赖任务禁止执行，yes
                 continue;
             }
             // dependencies must be fully completed
-            if(!completeTaskList.containsKey(depsNode)){
+            if(!completeTaskList.containsKey(depsNode)){ //依赖没有完成，则需要 waiting
                 return DependResult.WAITING;
             }
             ExecutionStatus taskState = completeTaskList.get(depsNode).getState();
-            if(taskState.typeIsFailure()){
+            if(taskState.typeIsFailure()){ //依赖任务失败了
                 return DependResult.FAILED;
             }
-            if(taskState.typeIsPause() || taskState.typeIsCancel()){
+            if(taskState.typeIsPause() || taskState.typeIsCancel()){  //依赖pause，则需要 waiting
                 return DependResult.WAITING;
             }
         }
@@ -800,6 +810,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 查看Task的依赖结果
      * get task dependency result
      * @param taskInstance task instance
      * @return DependResult
@@ -846,9 +857,9 @@ public class MasterExecThread implements Runnable {
      */
     private void runProcess(){
         // submit start node
-        submitPostNode(null);//提交后续节点，父节点为null，说明提交首节点，先提交首节点
+        submitPostNode(null);//提交后续节点，父节点为null，说明提交首节点，先提交首节点；没有真正提交，只是把首节点保存到 readyToSubmitTaskList 集合中了
         boolean sendTimeWarning = false;
-        while(!processInstance.IsProcessInstanceStop()){
+        while(!processInstance.IsProcessInstanceStop()){ //然后就一直执行while了
 
             // send warning email if process time out.
             if( !sendTimeWarning && checkProcessTimeOut(processInstance) ){
@@ -856,15 +867,20 @@ public class MasterExecThread implements Runnable {
                         processDao.findProcessDefineById(processInstance.getProcessDefinitionId()));
                 sendTimeWarning = true;
             }
+
+            //刚开始的时候，activeTaskNode为null吧？ 是的，所以方法刚进来会跳过这里，执行下面的 submitStandByTask；
+            // activeTaskNode的value Future是boolean类型，代表任务是否执行成功
             for(Map.Entry<MasterBaseTaskExecThread,Future<Boolean>> entry: activeTaskNode.entrySet()) {
                 Future<Boolean> future = entry.getValue();
                 TaskInstance task  = entry.getKey().getTaskInstance();
 
-                if(!future.isDone()){
+                if(!future.isDone()){ // 任务还没结束，跳过；
                     continue;
                 }
+
+                //任务结束了
                 // node monitor thread complete
-                activeTaskNode.remove(entry.getKey());
+                activeTaskNode.remove(entry.getKey()); //从activeTaskNode中移除
                 if(task == null){
                     this.taskFailedSubmit = true;
                     continue;
@@ -872,24 +888,24 @@ public class MasterExecThread implements Runnable {
                 logger.info("task :{}, id:{} complete, state is {} ",
                         task.getName(), task.getId(), task.getState().toString());
                 // node success , post node submit
-                if(task.getState() == ExecutionStatus.SUCCESS){
-                    completeTaskList.put(task.getName(), task);
-                    submitPostNode(task.getName());
+                if(task.getState() == ExecutionStatus.SUCCESS){  //任务成功了，
+                    completeTaskList.put(task.getName(), task);  //放进completeTaskList 完成的任务集合中；
+                    submitPostNode(task.getName());      //继续提交这个任务后续的任务 (加到readyToSubmitTaskList中)   整个流程就这么往下走，最终执行完整个dag
                     continue;
                 }
                 // node fails, retry first, and then execute the failure process
-                if(task.getState().typeIsFailure()){
+                if(task.getState().typeIsFailure()){  //任务失败了
                     if(task.getState() == ExecutionStatus.NEED_FAULT_TOLERANCE){
-                        this.recoverToleranceFaultTaskList.add(task);
+                        this.recoverToleranceFaultTaskList.add(task); //需要容错
                     }
-                    if(task.taskCanRetry()){
-                        addTaskToStandByList(task);
+                    if(task.taskCanRetry()){ //可以重试的话，
+                        addTaskToStandByList(task); //继续提交这个任务 (加到readyToSubmitTaskList中)
                     }else{
                         // node failure, based on failure strategy
-                        errorTaskList.put(task.getName(), task);
+                        errorTaskList.put(task.getName(), task);  //不能重试了， 加到这两个集合中；
                         completeTaskList.put(task.getName(), task);
-                        if(processInstance.getFailureStrategy() == FailureStrategy.END){
-                            killTheOtherTasks();
+                        if(processInstance.getFailureStrategy() == FailureStrategy.END){ //不能执行后续任务
+                            killTheOtherTasks(); //杀掉后续其他任务；
                         }
                     }
                     continue;
@@ -915,8 +931,8 @@ public class MasterExecThread implements Runnable {
                     }
                 }
             }
-            if(canSubmitTaskToQueue()){
-                submitStandByTask();
+            if(canSubmitTaskToQueue()){ //检查当前机器的资源是否充足
+                submitStandByTask(); //真正的去提交Task 到 Mysql 和 zk 队列， 方法刚进来的时候会跳到这； 这里提交之后，会往activeTaskNode中加Task，才会执行上面
             }
             try {
                 Thread.sleep(Constants.SLEEP_TIME_MILLIS);
@@ -949,6 +965,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 检查当前机器资源是够足够
      * whether can submit task to queue
      * @return boolean
      */
@@ -985,6 +1002,7 @@ public class MasterExecThread implements Runnable {
     }
 
     /**
+     * 看是否过了任务重试的间隔
      * whether the retry interval is timed out
      * @param taskInstance task instance
      * @return Boolean
@@ -1009,15 +1027,16 @@ public class MasterExecThread implements Runnable {
 
     /**
      * handling the list of tasks to be submitted
+     * >>>>>>> 真正提交readyToSubmitTaskList集合中的任务；
      */
     private void submitStandByTask(){
         for(Map.Entry<String, TaskInstance> entry: readyToSubmitTaskList.entrySet()) {
             TaskInstance task = entry.getValue();
-            DependResult dependResult = getDependResultForTask(task);
-            if(DependResult.SUCCESS == dependResult){
-                if(retryTaskIntervalOverTime(task)){
-                    submitTaskExec(task);
-                    removeTaskFromStandbyList(task);
+            DependResult dependResult = getDependResultForTask(task); //依赖状态
+            if(DependResult.SUCCESS == dependResult){ //依赖成功
+                if(retryTaskIntervalOverTime(task)){ //过了重试间隔
+                    submitTaskExec(task);       // >>>>> 触发提交任务到zk 队列，有把描述任务执行结果的Future加到activeTaskNode的逻辑
+                    removeTaskFromStandbyList(task); //从等待提交中移除
                 }
             }else if(DependResult.FAILED == dependResult){
                 // if the dependency fails, the current node is not submitted and the state changes to failure.

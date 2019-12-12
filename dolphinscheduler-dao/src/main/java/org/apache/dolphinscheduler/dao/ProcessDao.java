@@ -770,6 +770,8 @@ public class ProcessDao {
     }
 
     /**
+     * 提交任务的逻辑一直到ProcessDao这里
+     *
      * submit task to mysql and task queue
      * submit sub process to command
      * @param taskInstance taskInstance
@@ -780,9 +782,11 @@ public class ProcessDao {
     public TaskInstance submitTask(TaskInstance taskInstance, ProcessInstance processInstance){
         logger.info("start submit task : {}, instance id:{}, state: {}, ",
                 taskInstance.getName(), processInstance.getId(), processInstance.getState() );
-        processInstance = this.findProcessInstanceDetailById(processInstance.getId());
+        processInstance = this.findProcessInstanceDetailById(processInstance.getId()); //流程实例
+
         //submit to mysql
-        TaskInstance task= submitTaskInstanceToMysql(taskInstance, processInstance);
+        TaskInstance task= submitTaskInstanceToMysql(taskInstance, processInstance); //保存到Mysql
+
         if(task.isSubProcess() && !task.getState().typeIsFinished()){
             ProcessInstanceMap processInstanceMap = setProcessInstanceMap(processInstance, task);
 
@@ -790,14 +794,14 @@ public class ProcessDao {
             Map<String, String> subProcessParam = JSONUtils.toMap(taskNode.getParams());
             Integer defineId = Integer.parseInt(subProcessParam.get(Constants.CMDPARAM_SUB_PROCESS_DEFINE_ID));
             createSubWorkProcessCommand(processInstance, processInstanceMap, defineId, task);
-        }else if(!task.getState().typeIsFinished()){
-            //submit to task queue
-            task.setProcessInstancePriority(processInstance.getProcessInstancePriority());
-            submitTaskToQueue(task);
+        }else if(!task.getState().typeIsFinished()){ //任务状态不是完成的
+            //submit to task queue  提交到zk队列
+            task.setProcessInstancePriority(processInstance.getProcessInstancePriority()); //设置流程实例优先级
+            submitTaskToQueue(task); // >>>> 提交到zk队列
         }
         logger.info("submit task :{} state:{} complete, instance id:{} state: {}  ",
                 taskInstance.getName(), task.getState(), processInstance.getId(), processInstance.getState());
-        return task;
+        return task; //返回提交的Task
     }
 
     /**
@@ -966,6 +970,8 @@ public class ProcessDao {
     }
 
     /**
+     * 提交任务到zk队列
+     *
      * submit task to queue
      * @param taskInstance taskInstance
      * @return whether submit task to queue success
@@ -978,12 +984,12 @@ public class ProcessDao {
                 logger.info(String.format("submit to task queue, but task [%s] state already be running. ", taskInstance.getName()));
                 return true;
             }
-            if(checkTaskExistsInTaskQueue(taskInstance)){
+            if(checkTaskExistsInTaskQueue(taskInstance)){ //是否在zk队列中已存在
                 logger.info(String.format("submit to task queue, but task [%s] already exists in the queue.", taskInstance.getName()));
                 return true;
             }
             logger.info("task ready to queue: {}" , taskInstance);
-            taskQueue.add(DOLPHINSCHEDULER_TASKS_QUEUE, taskZkInfo(taskInstance));
+            taskQueue.add(DOLPHINSCHEDULER_TASKS_QUEUE, taskZkInfo(taskInstance));  //队列中不存在，往zk队列上加；
             logger.info(String.format("master insert into queue success, task : %s", taskInstance.getName()) );
             return true;
         }catch (Exception e){
@@ -995,6 +1001,9 @@ public class ProcessDao {
     }
 
     /**
+     * 给TaskInstance构建在zookeeper(队列上)存储的信息；
+     * 通过比较从高到低四个级别的优先级，选择优先级最高的任务。
+     *
      * ${processInstancePriority}_${processInstanceId}_${taskInstancePriority}_${taskInstanceId}_${task executed by ip1},${ip2}...
      * The tasks with the highest priority are selected by comparing the priorities of the above four levels from high to low.
      * @param taskInstance taskInstance
@@ -1115,6 +1124,8 @@ public class ProcessDao {
     }
 
     /**
+     * 检查任务是否在队列中已经存在
+     *
      * check the task instance existing in queue
      * @param taskInstance taskInstance
      * @return whether taskinstance exists queue
@@ -1124,7 +1135,8 @@ public class ProcessDao {
             return false;
         }
 
-        String taskZkInfo = taskZkInfo(taskInstance);
+        //${processInstancePriority}_${processInstanceId}_${taskInstancePriority}_${taskInstanceId}_${task executed by ip1},${ip2}...
+        String taskZkInfo = taskZkInfo(taskInstance); //一个Task在zk上存的什么在这里应该可以看出来；
 
         return taskQueue.checkTaskExists(DOLPHINSCHEDULER_TASKS_QUEUE, taskZkInfo);
     }

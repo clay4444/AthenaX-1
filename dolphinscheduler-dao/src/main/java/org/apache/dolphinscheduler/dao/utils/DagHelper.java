@@ -237,6 +237,8 @@ public class DagHelper {
 
 
     /**
+     * 从dag图中找 parentNodeName 这个节点之后的开始节点，parentNodeName为空，说明找没有前置依赖的节点
+     * 涉及到了递归去找；
      *
      * get start vertex in one dag
      * it would find the post node if the start vertex is forbidden running
@@ -251,7 +253,7 @@ public class DagHelper {
         if(completeTaskList == null){
             completeTaskList = new HashMap<>();
         }
-        Collection<String> startVertexs = null;
+        Collection<String> startVertexs = null; //dag中所有起始节点
         if(StringUtils.isNotEmpty(parentNodeName)){
             startVertexs = dag.getSubsequentNodes(parentNodeName);  //dag中找parentNodeName这个节点的后继节点
         }else{
@@ -260,7 +262,7 @@ public class DagHelper {
 
         List<String> tmpStartVertexs = new ArrayList<>();
         if(startVertexs!= null){
-            tmpStartVertexs.addAll(startVertexs);
+            tmpStartVertexs.addAll(startVertexs); //起始节点
         }
 
         for(String start : startVertexs){
@@ -269,20 +271,23 @@ public class DagHelper {
                 // the start can be submit if not forbidden and not in complete tasks
                 continue;
             }
+            //如果这个起始节点是禁止运行的，或者是已经完成的，那么这个节点后面的可能就需要提交了
             // then submit the post nodes
-            Collection<String> postNodes = getStartVertex(start, dag, completeTaskList);
+            Collection<String> postNodes = getStartVertex(start, dag, completeTaskList); //递归的找start这个节点之后的开始节点
             for(String post : postNodes){
                 TaskNode postNode = dag.getNode(post);
-                if(taskNodeCanSubmit(postNode, dag, completeTaskList)){
-                    tmpStartVertexs.add(post);
+                if(taskNodeCanSubmit(postNode, dag, completeTaskList)){ //判断这个任务是否可以提交，@TODO 这里应该不用再判断了，因为递归进去的时候，肯定已经判断了； 看能是否提个pr
+                    tmpStartVertexs.add(post); //加到起始节点里；
                 }
             }
-            tmpStartVertexs.remove(start);
+            tmpStartVertexs.remove(start); //最后需要删除这个禁止运行的或者已经完成的，它不能提交运行
         }
         return tmpStartVertexs;
     }
 
     /**
+     * 判断一个TaskNode是否可以被提交：当这个task的所有前置依赖节点都是禁止运行或者已经完成时，这个task才可以被提交
+     *
      * the task can be submit when  all the depends nodes are forbidden or complete
      * @param taskNode taskNode
      * @param dag dag
@@ -300,8 +305,8 @@ public class DagHelper {
 
         for(String dependNodeName : dependList){
             TaskNode dependNode = dag.getNode(dependNodeName);
-            if(!dependNode.isForbidden() && !completeTaskList.containsKey(dependNodeName)){
-                return false;
+            if(!dependNode.isForbidden() && !completeTaskList.containsKey(dependNodeName)){//依赖任务既不是禁止运行的，也不是已经完成的；
+                return false; //说明这个任务不能提交
             }
         }
         return true;

@@ -116,6 +116,8 @@ public class MasterBaseTaskExecThread implements Callable<Boolean> {
     }
 
     /**
+     * 统一任务提交逻辑：
+     *
      * submit master base task exec thread
      * @return TaskInstance
      */
@@ -129,9 +131,9 @@ public class MasterBaseTaskExecThread implements Callable<Boolean> {
 
         while (retryTimes <= commitRetryTimes){
             try {
-                TaskInstance task = processDao.submitTask(taskInstance, processInstance);
+                TaskInstance task = processDao.submitTask(taskInstance, processInstance); //这里提交；
                 if(task != null){
-                    return task;
+                    return task; //提交成功之后，直接返回了当前Task
                 }
                 logger.error("task commit to mysql and queue failed , task has already retry {} times, please check the database", commitRetryTimes);
                 Thread.sleep(commitRetryInterval);
