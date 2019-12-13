@@ -48,6 +48,7 @@ import java.util.stream.Collectors;
 
 
 /**
+ *  用户任务的实际执行；
  *  task scheduler thread
  */
 public class TaskScheduleThread implements Runnable {
@@ -83,25 +84,27 @@ public class TaskScheduleThread implements Runnable {
         this.taskInstance = taskInstance;
     }
 
+    //执行 TaskInstance
     @Override
     public void run() {
 
         try {
-            // update task state is running according to task type
+            // update task state is running according to task type     更新任务状态为执行中
             updateTaskState(taskInstance.getTaskType());
 
             logger.info("script path : {}", taskInstance.getExecutePath());
-            // task node
+
+            // task node   json字符串 转化为TaskNode类
             TaskNode taskNode = JSONObject.parseObject(taskInstance.getTaskJson(), TaskNode.class);
 
-            // copy hdfs/minio file to local
+            // copy hdfs/minio file to local  //拷贝文件
             copyHdfsToLocal(processDao,
                     taskInstance.getExecutePath(),
                     createProjectResFiles(taskNode),
                     logger);
 
             // get process instance according to tak instance
-            ProcessInstance processInstance = taskInstance.getProcessInstance();
+            ProcessInstance processInstance = taskInstance.getProcessInstance();  //流程实例
 
             // set task props
             TaskProps taskProps = new TaskProps(taskNode.getParams(),
@@ -120,25 +123,27 @@ public class TaskScheduleThread implements Runnable {
             // set task timeout
             setTaskTimeout(taskProps, taskNode);
 
-            taskProps.setTaskAppId(String.format("%s_%s_%s",
+            taskProps.setTaskAppId(String.format("%s_%s_%s",  //task appId:  流程定义id_流程实例id_任务实例id
                     taskInstance.getProcessDefine().getId(),
                     taskInstance.getProcessInstance().getId(),
                     taskInstance.getId()));
 
-            // custom logger
+            // custom logger    自定义logger
             Logger taskLogger = LoggerFactory.getLogger(LoggerUtils.buildTaskId(LoggerUtils.TASK_LOGGER_INFO_PREFIX,
                     taskInstance.getProcessDefine().getId(),
                     taskInstance.getProcessInstance().getId(),
                     taskInstance.getId()));
 
+            //构建实际的Task
             task = TaskManager.newTask(taskInstance.getTaskType(),
                     taskProps,
                     taskLogger);
 
+            //下面的执行过程和具体的Task有关；
             // task init
             task.init();
 
-            // task handle
+            // task handle  执行
             task.handle();
 
             // task result process
@@ -180,6 +185,7 @@ public class TaskScheduleThread implements Runnable {
     }
 
     /**
+     *  更新任务状态为执行中
      *  update task state according to task type
      * @param taskType
      */

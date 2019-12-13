@@ -42,12 +42,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 
 /**
+ *  领取任务的线程
  *  fetch task thread
  */
 public class FetchTaskThread implements Runnable{
 
     private static final Logger logger = LoggerFactory.getLogger(FetchTaskThread.class);
+
     /**
+     *  并发执行Task的个数, 执行时每次会从队列中拉 taskNum 这么多个Task
      *  set worker concurrent tasks
      */
     private final int taskNum;
@@ -68,11 +71,12 @@ public class FetchTaskThread implements Runnable{
     private final ProcessDao processDao;
 
     /**
-     *  worker thread pool executor
+     *  worker thread pool executor  线程池线程的个数 = workerExecNums
      */
     private final ExecutorService workerExecService;
 
     /**
+     *  一个worker上执行任务要启多少个线程，
      *  worker exec nums
      */
     private int workerExecNums;
@@ -108,6 +112,7 @@ public class FetchTaskThread implements Runnable{
     }
 
     /**
+     * 检查一个 taskInstance 是否能跑在当前worker上； 直接从db中查，
      * Check if the task runs on this worker
      * @param taskInstance
      * @param host
@@ -135,35 +140,37 @@ public class FetchTaskThread implements Runnable{
         return ipList.contains(host);
     }
 
-
-
-
+    /**
+     * 任务执行逻辑；
+     * 主要就是轮询的从zk队列按照优先级中拉任务，然后用 workerExecService 线程池，用 TaskScheduleThread 执行任务；
+     */
     @Override
     public void run() {
         while (Stopper.isRunning()){
-            InterProcessMutex mutex = null;
+            InterProcessMutex mutex = null;  //为什么需要分布式锁？ 防止两个worker拿到同一个任务
             try {
                 ThreadPoolExecutor poolExecutor = (ThreadPoolExecutor) workerExecService;
-                //check memory and cpu usage and threads
+                //check memory and cpu usage and threads  检查资源、线程数是否足够
                 boolean runCheckFlag = OSUtils.checkResource(this.conf, false) && checkThreadCount(poolExecutor);
 
                 Thread.sleep(Constants.SLEEP_TIME_MILLIS);
 
-                if(!runCheckFlag) {
+                if(!runCheckFlag) { //没资源 / 线程不够，就不执行；
                     continue;
                 }
 
-                //whether have tasks, if no tasks , no need lock  //get all tasks
+                //whether have tasks, if no tasks , no need lock  //获取 zk 上 tasks_queue 下的所有task
                 List<String> tasksQueueList = taskQueue.getAllTasks(Constants.DOLPHINSCHEDULER_TASKS_QUEUE);
                 if (CollectionUtils.isEmpty(tasksQueueList)){
-                    continue;
+                    continue;  //没任务，跳过
                 }
                 // creating distributed locks, lock path /dolphinscheduler/lock/worker
+                //拿到分布式锁
                 mutex = zkWorkerClient.acquireZkLock(zkWorkerClient.getZkClient(),
                         zkWorkerClient.getWorkerLockPath());
 
 
-                // task instance id str
+                // task instance id str   每次执行，从队列中拉取 taskNum 个Task， 这里拉取的时候已经按照优先级取了；
                 List<String> taskQueueStrArr = taskQueue.poll(Constants.DOLPHINSCHEDULER_TASKS_QUEUE, taskNum);
 
                 for(String taskQueueStr : taskQueueStrArr){
@@ -171,29 +178,30 @@ public class FetchTaskThread implements Runnable{
                         continue;
                     }
 
-                    if (!checkThreadCount(poolExecutor)) {
+                    if (!checkThreadCount(poolExecutor)) { //线程数足够
                         break;
                     }
 
                     // get task instance id
-                    taskInstId = getTaskInstanceId(taskQueueStr);
+                    taskInstId = getTaskInstanceId(taskQueueStr);   //task id
 
                     // mainly to wait for the master insert task to succeed
                     waitForTaskInstance();
 
-                    taskInstance = processDao.getTaskInstanceDetailByTaskId(taskInstId);
+                    taskInstance = processDao.getTaskInstanceDetailByTaskId(taskInstId);  //从db中找到任务实例
 
-                    // verify task instance is null
+                    // verify task instance is null   //任务实例为空，
                     if (verifyTaskInstanceIsNull(taskInstance)) {
                         logger.warn("remove task queue : {} due to taskInstance is null", taskQueueStr);
-                        removeNodeFromTaskQueue(taskQueueStr);
+                        removeNodeFromTaskQueue(taskQueueStr); //从队列中删除
                         continue;
                     }
 
+                    //对应哪个租户
                     Tenant tenant = processDao.getTenantForProcess(taskInstance.getProcessInstance().getTenantId(),
                             taskInstance.getProcessDefine().getUserId());
 
-                    // verify tenant is null
+                    // verify tenant is null  租户为空，也从zk队列中移除
                     if (verifyTenantIsNull(tenant)) {
                         logger.warn("remove task queue : {} due to tenant is null", taskQueueStr);
                         removeNodeFromTaskQueue(taskQueueStr);
@@ -208,29 +216,29 @@ public class FetchTaskThread implements Runnable{
                     logger.info("worker fetch taskId : {} from queue ", taskInstId);
 
 
-                    if(!checkWorkerGroup(taskInstance, OSUtils.getHost())){
+                    if(!checkWorkerGroup(taskInstance, OSUtils.getHost())){ //检查这个任务是否能在当前worker跑 (通过设置的worker组)
                         continue;
                     }
 
-                    // local execute path
+                    // local execute path     本地执行路径   /tmp/dolphinscheduler/exec/项目id/流程定义id/流程实例id/任务实例id/
                     String execLocalPath = getExecLocalPath();
 
                     logger.info("task instance  local execute path : {} ", execLocalPath);
 
                     // init task
-                    taskInstance.init(OSUtils.getHost(),
-                            new Date(),
-                            execLocalPath);
+                    taskInstance.init(OSUtils.getHost(), //在这台worker上跑；
+                            new Date(),  //开始时间
+                            execLocalPath);  //执行路径
 
-                    // check and create Linux users
+                    // check and create Linux users     在worker机上设置执行路径和执行用户
                     FileUtils.createWorkDirAndUserIfAbsent(execLocalPath,
                             tenant.getTenantCode(), logger);
 
                     logger.info("task : {} ready to submit to task scheduler thread",taskInstId);
-                    // submit task
+                    // submit task      真正的去执行用户任务；
                     workerExecService.submit(new TaskScheduleThread(taskInstance, processDao));
 
-                    // remove node from zk
+                    // remove node from zk     提交完之后，从zk队列中移除；
                     removeNodeFromTaskQueue(taskQueueStr);
                 }
 
@@ -282,6 +290,8 @@ public class FetchTaskThread implements Runnable{
     }
 
     /**
+     * 获取worker的本地执行路径
+     *          /tmp/dolphinscheduler/exec/项目id/流程定义id/流程实例id/任务实例id/
      * get execute local path
      *
      * @return execute local path

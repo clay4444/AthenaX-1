@@ -35,6 +35,7 @@ public class TaskQueueFactory {
 
 
   /**
+   * 获取队列的实现，现在只支持zk
    * get instance (singleton)
    *
    * @return instance

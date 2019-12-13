@@ -29,6 +29,7 @@ import java.util.Map;
 
 /**
  * task props
+ * task 任务的属性
  */
 public class TaskProps {
 

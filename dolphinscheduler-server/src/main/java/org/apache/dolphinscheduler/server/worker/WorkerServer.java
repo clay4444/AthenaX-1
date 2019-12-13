@@ -55,6 +55,10 @@ import java.util.concurrent.TimeUnit;
 
 /**
  *  worker server
+ *
+ *  FetchTaskThread主要负责不断从Task Queue中领取任务，并根据不同任务类型调用TaskScheduleThread对应执行器。
+ *
+ *  LoggerServer是一个RPC服务，提供日志分片查看、刷新和下载等功能
  */
 @ComponentScan("org.apache.dolphinscheduler")
 public class WorkerServer extends AbstractServer {
@@ -122,6 +126,7 @@ public class WorkerServer extends AbstractServer {
     private Boolean isCombinedServer;
 
     /**
+     * >>>> 入口启动
      * master server startup
      *
      * master server not use web service
@@ -133,6 +138,12 @@ public class WorkerServer extends AbstractServer {
 
 
     /**
+     * 启动完即run
+     * 主要涉及到三个线程
+     * 1. 一个用来一直轮询监听 /dolphinscheduler/tasks_kill 下的所有Task，然后杀死，最后从队列中移除
+     * 2. 一个线程(fetchTaskThread)用来领取任务  >>>>> 核心
+     * 3. 一个线程用来维护和zk的心跳
+     *
      * worker server run
      */
     @PostConstruct
@@ -145,41 +156,43 @@ public class WorkerServer extends AbstractServer {
             System.exit(1);
         }
 
-        zkWorkerClient = ZKWorkerClient.getZKWorkerClient();
+        zkWorkerClient = ZKWorkerClient.getZKWorkerClient(); //worker操作zk的客户端， 主要动作就是向zk注册自己
 
-        this.taskQueue = TaskQueueFactory.getTaskQueueInstance();
+        this.taskQueue = TaskQueueFactory.getTaskQueueInstance(); //zk 队列，返回 TaskQueueZkImpl
 
+        //一个线程，用来杀任务？ 是的，杀 /dolphinscheduler/tasks_kill 下注册的所有task
         this.killExecutorService = ThreadUtils.newDaemonSingleThreadExecutor("Worker-Kill-Thread-Executor");
 
+        //一个线程，用来从zk队列中领取任务
         this.fetchTaskExecutorService = ThreadUtils.newDaemonSingleThreadExecutor("Worker-Fetch-Thread-Executor");
 
         //  heartbeat interval
         heartBeatInterval = conf.getInt(Constants.WORKER_HEARTBEAT_INTERVAL,
                 Constants.defaultWorkerHeartbeatInterval);
 
+        //一个线程，用来维持和zk的心跳
         heartbeatWorkerService = ThreadUtils.newDaemonThreadScheduledExecutor("Worker-Heartbeat-Thread-Executor", Constants.defaulWorkerHeartbeatThreadNum);
 
-        // heartbeat thread implement
+        // heartbeat thread implement  心跳线程实现
         Runnable heartBeatThread = heartBeatThread();
 
         zkWorkerClient.setStoppable(this);
 
-        // regular heartbeat
+        // regular heartbeat   开始定期发送心跳
         // delay 5 seconds, send heartbeat every 30 seconds
         heartbeatWorkerService.scheduleAtFixedRate(heartBeatThread, 5, heartBeatInterval, TimeUnit.SECONDS);
 
-        // kill process thread implement
+        // kill process thread implement    用来杀死 /dolphinscheduler/tasks_kill 下注册的所有task
         Runnable killProcessThread = getKillProcessThread();
 
         // submit kill process thread
         killExecutorService.execute(killProcessThread);
 
 
-
         // get worker number of concurrent tasks
         int taskNum = conf.getInt(Constants.WORKER_FETCH_TASK_NUM,Constants.defaultWorkerFetchTaskNum);
 
-        // new fetch task thread
+        // new fetch task thread    领任务的线程
         FetchTaskThread fetchTaskThread = new FetchTaskThread(taskNum,zkWorkerClient, processDao,conf, taskQueue);
 
         // submit fetch task thread
@@ -277,6 +290,7 @@ public class WorkerServer extends AbstractServer {
 
 
     /**
+     * 心跳线程，当前节点资源信息注册到zk
      * heartbeat thread implement
      *
      * @return
@@ -298,6 +312,7 @@ public class WorkerServer extends AbstractServer {
 
 
     /**
+     * 杀死任务的线程？   作用是啥？  主要就是用来杀死 /dolphinscheduler/tasks_kill 下挂的所有task
      * kill process thread implement
      *
      * @return kill process thread
@@ -306,6 +321,8 @@ public class WorkerServer extends AbstractServer {
         Runnable killProcessThread  = new Runnable() {
             @Override
             public void run() {
+
+                // /dolphinscheduler/tasks_kill  路径下的所有孩子(即所有task)  这些task是要被杀死的
                 Set<String> taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL);
                 while (Stopper.isRunning()){
                     try {
@@ -316,12 +333,12 @@ public class WorkerServer extends AbstractServer {
                     // if set is null , return
                     if (CollectionUtils.isNotEmpty(taskInfoSet)){
                         for (String taskInfo : taskInfoSet){
-                            killTask(taskInfo, processDao);
-                            removeKillInfoFromQueue(taskInfo);
+                            killTask(taskInfo, processDao);  //杀死任务，从zk队列中移除
+                            removeKillInfoFromQueue(taskInfo); //从zk队列中移除
                         }
                     }
 
-                    taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL);
+                    taskInfoSet = taskQueue.smembers(Constants.DOLPHINSCHEDULER_TASKS_KILL); //循环执行
                 }
             }
         };
@@ -329,6 +346,7 @@ public class WorkerServer extends AbstractServer {
     }
 
     /**
+     * 杀死任务
      * kill task
      *
      * @param taskInfo  task info
@@ -343,17 +361,17 @@ public class WorkerServer extends AbstractServer {
         }
         String host = taskInfoArray[0];
         int taskInstanceId = Integer.parseInt(taskInfoArray[1]);
-        TaskInstance taskInstance = pd.getTaskInstanceDetailByTaskId(taskInstanceId);
+        TaskInstance taskInstance = pd.getTaskInstanceDetailByTaskId(taskInstanceId);  //从db中找到对应的任务实例
         if(taskInstance == null){
             logger.error("cannot find the kill task :" + taskInfo);
             return;
         }
 
-        if(host.equals(Constants.NULL) && StringUtils.isEmpty(taskInstance.getHost())){
-            deleteTaskFromQueue(taskInstance, pd);
-            taskInstance.setState(ExecutionStatus.KILL);
-            pd.saveTaskInstance(taskInstance);
-        }else{
+        if(host.equals(Constants.NULL) && StringUtils.isEmpty(taskInstance.getHost())){ //task的host为空
+            deleteTaskFromQueue(taskInstance, pd);  //从zk队列中移除，需要用到分布式锁，因为需要确保只能有一个worker在杀任务；
+            taskInstance.setState(ExecutionStatus.KILL); //设置状态
+            pd.saveTaskInstance(taskInstance);  //更新db
+        }else{                                                                          //task的host不为空，
             if(taskInstance.getTaskType().equals(TaskType.DEPENDENT.toString())){
                 taskInstance.setState(ExecutionStatus.KILL);
                 pd.saveTaskInstance(taskInstance);
@@ -367,6 +385,7 @@ public class WorkerServer extends AbstractServer {
     }
 
     /**
+     * 从队列中删除任务，需要用到分布式锁，因为需要确保只能有一个worker在杀任务；
      * delete task from queue
      *
      * @param taskInstance
@@ -380,9 +399,9 @@ public class WorkerServer extends AbstractServer {
         try {
             mutex = zkWorkerClient.acquireZkLock(zkWorkerClient.getZkClient(),
                     zkWorkerClient.getWorkerLockPath());
-            if(pd.checkTaskExistsInTaskQueue(taskInstance)){
+            if(pd.checkTaskExistsInTaskQueue(taskInstance)){  //确定是否存在
                 String taskQueueStr = pd.taskZkInfo(taskInstance);
-                taskQueue.removeNode(Constants.DOLPHINSCHEDULER_TASKS_QUEUE, taskQueueStr);
+                taskQueue.removeNode(Constants.DOLPHINSCHEDULER_TASKS_QUEUE, taskQueueStr); //移除
             }
 
         } catch (Exception e){
@@ -393,6 +412,7 @@ public class WorkerServer extends AbstractServer {
     }
 
     /**
+     * 从队列中移除
      * remove Kill info from queue
      *
      * @param taskInfo task info

@@ -69,17 +69,17 @@ public class ZKWorkerClient extends AbstractZKClient {
 	}
 
 	/**
-	 * init
+	 * init   创建完即执行init
 	 */
 	private void init(){
 
-		// init system znode
+		// init system znode   创建根目录下的初始节点
 		this.initSystemZNode();
 
-		// monitor worker
+		// monitor worker   主要是判断是否是自己死了，是就停掉自己
 		this.listenerWorker();
 
-		// register worker
+		// register worker   在zk上注册当前worker
 		this.registWorker();
 	}
 
@@ -109,6 +109,7 @@ public class ZKWorkerClient extends AbstractZKClient {
 
 
 	/**
+	 * 以本机ip为host，角色为worker，向zk注册
 	 *  register worker
 	 */
 	private void registWorker(){
@@ -125,6 +126,7 @@ public class ZKWorkerClient extends AbstractZKClient {
 	}
 	
 	/**
+	 * 监控worker
 	 *  monitor worker
 	 */
 	private void listenerWorker(){
@@ -135,15 +137,15 @@ public class ZKWorkerClient extends AbstractZKClient {
 				@Override
 				public void childEvent(CuratorFramework client, PathChildrenCacheEvent event) throws Exception {
 					switch (event.getType()) {
-						case CHILD_ADDED:
+						case CHILD_ADDED:  //新worker add
 							logger.info("node added : {}" ,event.getData().getPath());
 							break;
-						case CHILD_REMOVED:
+						case CHILD_REMOVED:  //worker宕机
                             String path = event.getData().getPath();
 							//find myself dead
 							String serverHost = getHostByEventDataPath(path);
-							if(checkServerSelfDead(serverHost, ZKNodeType.WORKER)){
-								return;
+							if(checkServerSelfDead(serverHost, ZKNodeType.WORKER)){ //检查是否是自己死了,是的话，停掉自己,
+								return; //直接终止
 							}
 							break;
 						case CHILD_UPDATED:

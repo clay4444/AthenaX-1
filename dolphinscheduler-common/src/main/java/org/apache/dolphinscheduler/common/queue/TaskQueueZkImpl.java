@@ -134,6 +134,14 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
 
 
     /**
+     * 从队列中拉取 tasksNum 个任务； 拉取的时候已经排好了优先级
+     *
+     * 优先级设计：
+     * 按照不同流程实例优先级优先于同一个流程实例优先级优先于同一流程内任务优先级优先于同一流程内任务提交顺序依次从高到低进行任务处理。
+     *
+     * 也就是说：
+     * 流程实例优先级比较高的流程先执行，同一个流程实例内，任务优先级比较高的任务先执行，优先级一样的时候，按照先后顺序执行
+     *
      * An element pops out of the queue <p>
      * note:
      *   ${processInstancePriority}_${processInstanceId}_${taskInstancePriority}_${taskId}_host1,host2,...
@@ -148,25 +156,26 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
         try{
             CuratorFramework zk = getZkClient();
             String tasksQueuePath = getTasksPath(key) + Constants.SINGLE_SLASH;
-            List<String> list = zk.getChildren().forPath(getTasksPath(key));
+            List<String> list = zk.getChildren().forPath(getTasksPath(key)); //     /dolphinscheduler/tasks_queue/  下的所有Task
 
-            if(list != null && list.size() > 0){
+            if(list != null && list.size() > 0){      //有任务
 
-                String workerIp = OSUtils.getHost();
+                String workerIp = OSUtils.getHost();  //本机ip
                 String workerIpLongStr = String.valueOf(IpUtils.ipToLong(workerIp));
 
-                int size = list.size();
+                int size = list.size();  //所有任务的个数
 
-
+                //用 TreeSet 维护优先级
                 Set<String> taskTreeSet = new TreeSet<>(new Comparator<String>() {
                     @Override
                     public int compare(String o1, String o2) {
 
                         String s1 = o1;
                         String s2 = o2;
-                        String[] s1Array = s1.split(Constants.UNDERLINE);
+                        String[] s1Array = s1.split(Constants.UNDERLINE);  //按下划线分割
                         if(s1Array.length>4){
-                            // warning: if this length > 5, need to be changed
+                            //warning: if this length > 5, need to be changed
+                            //取ip之前的所有，${流程实例优先级}_${流程实例id}_${任务实例优先级}_${任务实例id}
                             s1 = s1.substring(0, s1.lastIndexOf(Constants.UNDERLINE) );
                         }
 
@@ -176,10 +185,11 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
                             s2 = s2.substring(0, s2.lastIndexOf(Constants.UNDERLINE) );
                         }
 
-                        return s1.compareTo(s2);
+                        return s1.compareTo(s2); //按照这个顺序： ${流程实例优先级}_${流程实例id}_${任务实例优先级}_${任务实例id}
                     }
                 });
 
+                //加到TreeSet中；
                 for (int i = 0; i < size; i++) {
 
                     String taskDetail = list.get(i);
@@ -208,13 +218,14 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
 
                 }
 
+                //从已经排好序的 taskTreeSet 中取出 tasksNum 个任务，
                 List<String> taskslist = getTasksListFromTreeSet(tasksNum, taskTreeSet);
 
                 logger.info("consume tasks: {},there still have {} tasks need to be executed", Arrays.toString(taskslist.toArray()), size - taskslist.size());
 
                 return taskslist;
             }else{
-                Thread.sleep(Constants.SLEEP_TIME_MILLIS);
+                Thread.sleep(Constants.SLEEP_TIME_MILLIS); //没有任务，睡眠
             }
 
         } catch (Exception e) {
@@ -225,8 +236,8 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
 
 
     /**
+     * 从taskTreeSet中取出 tasksNum 个 Task；
      * get task list from tree set
-     *
      * @param tasksNum
      * @param taskTreeSet
      */
@@ -271,6 +282,7 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
         return sb.toString();
     }
 
+    //在zk队列中删除一个task
     @Override
     public void removeNode(String key, String nodeValue){
 
@@ -350,6 +362,7 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
 
 
     /**
+     * /dolphinscheduler/tasks_kill  路径下的所有孩子(即所有task)
      * Gets all the elements of the set based on the key
      * @param key  The key is the kill/cancel queue path name
      * @return
@@ -428,6 +441,7 @@ public class TaskQueueZkImpl extends AbstractZKClient implements ITaskQueue {
     }
 
     /**
+     * 根路径 /dolphinscheduler  下的，以 key 为开头的；
      * Get the task queue path
      * @param key  task queue name
      * @return

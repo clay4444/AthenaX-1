@@ -83,6 +83,7 @@ public class FileUtils {
      */
     public static String getProcessExecDir(int projectId, int processDefineId, int processInstanceId, int taskInstanceId) {
 
+        //          /tmp/dolphinscheduler/exec/项目id/流程定义id/流程实例id/任务实例id/
         return String.format("%s/process/%s/%s/%s/%s", PropertyUtils.getString(PROCESS_EXEC_BASEPATH), Integer.toString(projectId),
                 Integer.toString(processDefineId), Integer.toString(processInstanceId),Integer.toString(taskInstanceId));
     }
@@ -107,6 +108,7 @@ public class FileUtils {
     }
 
     /**
+     * 在worker机上设置执行路径和执行用户
      * create directory and user
      * @param execLocalPath execute local path
      * @param userName user name
